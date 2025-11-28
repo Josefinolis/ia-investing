@@ -1,5 +1,6 @@
 import os
 import json
+import requests
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -18,12 +19,12 @@ except Exception as e:
 # ==========================================================
 
 def get_news_data(ticker: str):
-    news_text = """
-Propel Holdings ({ticker}) today announced quarterly earnings that beat analyst expectations by 15%, 
-driven by the successful expansion of its digital platform into new European markets, 
-suggesting strong revenue growth for the upcoming fiscal year.
-"""
-    return news_text
+    key = os.environ.get("ALPHA_VANTAGE_API_KEY")
+    url = f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers={ticker}&apikey={key}"
+    r = requests.get(url)
+    data = r.json()
+
+    return data
 
 def analyze_news_with_gemini(ticker: str, news_text: str):
     prompt = f"""
@@ -67,7 +68,7 @@ TEXT TO ANALYZE:
 # ==========================================================
 
 if __name__ == "__main__":
-    ticker = "PRL"
+    ticker = "AAPL"
     news = get_news_data(ticker)
 
     analysis_result = analyze_news_with_gemini(ticker, news)
