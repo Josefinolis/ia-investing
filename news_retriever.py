@@ -1,78 +1,149 @@
-# news_retriever.py
+"""News retrieval from Alpha Vantage API with retry and rate limiting."""
 
-import os
 import requests
-import json
-from dotenv import load_dotenv
 from datetime import datetime
 from typing import List, Optional, Dict, Any
+from ratelimit import limits, sleep_and_retry
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from news import News 
+from config import get_settings
+from models import NewsItem
+from logger import logger, log_api_call, log_error, log_warning
 
-load_dotenv()
-date_format = "%Y%m%dT%H%M"
+DATE_FORMAT = "%Y%m%dT%H%M"
 
-def get_news_data(ticker: str, time_from: datetime, time_to: datetime) -> List[News]:
-    raw_data = fetch_raw_data(ticker, time_from, time_to)
-    
-    if not raw_data:
-        return []
-        
-    return process_api_response(raw_data)
 
-def fetch_raw_data(ticker: str, time_from: datetime, time_to: datetime) -> Optional[Dict[str, Any]]:
-    url = build_url(ticker, time_from, time_to)
-    
-    if not url:
-        return None
-    
+class NewsRetrievalError(Exception):
+    """Custom exception for news retrieval errors."""
+    pass
+
+
+@sleep_and_retry
+@limits(calls=5, period=60)
+def _rate_limited_request(url: str) -> requests.Response:
+    """Make a rate-limited HTTP request."""
+    return requests.get(url, timeout=30)
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+    retry=retry_if_exception_type((requests.RequestException, NewsRetrievalError)),
+    before_sleep=lambda retry_state: logger.debug(
+        f"Retry attempt {retry_state.attempt_number} after error"
+    )
+)
+def fetch_news_data(
+    ticker: str,
+    time_from: datetime,
+    time_to: datetime
+) -> List[NewsItem]:
+    """
+    Fetch news data from Alpha Vantage API with retry and rate limiting.
+
+    Args:
+        ticker: Stock ticker symbol
+        time_from: Start datetime for news search
+        time_to: End datetime for news search
+
+    Returns:
+        List of validated NewsItem objects
+
+    Raises:
+        NewsRetrievalError: If unable to fetch news after retries
+    """
+    settings = get_settings()
+
+    url = _build_url(ticker, time_from, time_to, settings.alpha_vantage_api_key)
+
     try:
-        r = requests.get(url)
-        r.raise_for_status()
-        data = r.json()
-        return data
+        log_api_call("Alpha Vantage", f"NEWS_SENTIMENT for {ticker}")
+        response = _rate_limited_request(url)
+        response.raise_for_status()
+        data = response.json()
+
+        # Check for API error messages
+        if "Error Message" in data:
+            raise NewsRetrievalError(f"API Error: {data['Error Message']}")
+
+        if "Note" in data:
+            log_warning(f"API Note: {data['Note']}")
+
+        return _process_response(data)
+
+    except requests.exceptions.Timeout:
+        log_error("Request timed out")
+        raise NewsRetrievalError("Request timed out")
+
     except requests.exceptions.RequestException as e:
-        print(f"Error performing HTTP request: {e}")
-        return None
-    except json.JSONDecodeError:
-        print("Error: API did not return valid JSON response.")
-        return None
+        log_error("HTTP request failed", e)
+        raise NewsRetrievalError(f"HTTP request failed: {e}")
 
-def build_url(ticker: str, time_from: datetime, time_to: datetime) -> Optional[str]:
-    key = os.environ.get("ALPHA_VANTAGE_API_KEY")
-    
-    if not key:
-        print("ERROR: ALPHA_VANTAGE_API_KEY not found in .env.")
-        return None
+    except ValueError as e:
+        log_error("Invalid JSON response", e)
+        raise NewsRetrievalError("API returned invalid JSON")
 
-    time_from_param = time_from.strftime(date_format)
-    time_to_param = time_to.strftime(date_format)
-    
-    url = (
-        f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT"
-        f"&tickers={ticker}&apikey={key}"
+
+def _build_url(
+    ticker: str,
+    time_from: datetime,
+    time_to: datetime,
+    api_key: str
+) -> str:
+    """Build the Alpha Vantage API URL."""
+    settings = get_settings()
+
+    time_from_param = time_from.strftime(DATE_FORMAT)
+    time_to_param = time_to.strftime(DATE_FORMAT)
+
+    return (
+        f"{settings.alpha_vantage_base_url}?function=NEWS_SENTIMENT"
+        f"&tickers={ticker}&apikey={api_key}"
         f"&time_from={time_from_param}&time_to={time_to_param}"
     )
-    return url
 
-def process_api_response(data: Dict[str, Any]) -> List[News]:
+
+def _process_response(data: Dict[str, Any]) -> List[NewsItem]:
+    """Process API response and convert to NewsItem models."""
     raw_feed: Optional[List[dict]] = data.get("feed")
-    
-    if not raw_feed:
-        return []
-        
-    news_list: List[News] = []
-    
-    for item in raw_feed:
-        title = item.get("title", "Title Not Available")
-        summary = item.get("summary", "Summary Not Available")
-        published = item.get("time_published", "Date Not Available") 
 
-        news_item = News(
-            title=title,
-            published_date=published,
-            summary=summary
-        )
-        news_list.append(news_item)
-        
+    if not raw_feed:
+        logger.debug("No news items in API response")
+        return []
+
+    news_list: List[NewsItem] = []
+
+    for item in raw_feed:
+        try:
+            # Extract ticker-specific relevance if available
+            relevance_score = None
+            ticker_sentiment = item.get("ticker_sentiment", [])
+            if ticker_sentiment:
+                relevance_score = float(ticker_sentiment[0].get("relevance_score", 0))
+
+            news_item = NewsItem(
+                title=item.get("title", "Title Not Available"),
+                summary=item.get("summary", "Summary Not Available"),
+                published_date=item.get("time_published", "Date Not Available"),
+                source=item.get("source"),
+                url=item.get("url"),
+                relevance_score=relevance_score
+            )
+            news_list.append(news_item)
+
+        except Exception as e:
+            logger.warning(f"Skipping invalid news item: {e}")
+            continue
+
+    logger.info(f"Retrieved {len(news_list)} news items")
     return news_list
+
+
+# Backwards compatibility alias
+def get_news_data(ticker: str, time_from: datetime, time_to: datetime) -> List[NewsItem]:
+    """Alias for fetch_news_data for backwards compatibility."""
+    try:
+        return fetch_news_data(ticker, time_from, time_to)
+    except NewsRetrievalError as e:
+        log_error(f"Failed to retrieve news: {e}")
+        return []
