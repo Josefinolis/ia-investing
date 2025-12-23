@@ -8,12 +8,12 @@ Analyzes news sentiment for stock tickers using AI to identify trading opportuni
 import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from config import get_settings
 from models import NewsItem, AnalysisResult, SentimentCategory, AnalysisSummary
@@ -21,6 +21,8 @@ from news_retriever import get_news_data
 from ia_analisis import analyze_news_with_gemini
 from database import get_database
 from logger import logger, log_success, log_warning, log_error
+from exporter import exporter
+from scoring import calculate_trend, SentimentScore
 
 console = Console()
 
@@ -32,18 +34,22 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s AAPL                    Analyze Apple news from last 7 days
-  %(prog)s TSLA --days 30          Analyze Tesla news from last 30 days
-  %(prog)s MSFT --from 2024-01-01  Analyze Microsoft news from specific date
-  %(prog)s NVDA --save             Analyze and save results to database
-  %(prog)s AMZN --summary          Show sentiment summary for ticker
+  %(prog)s AAPL                        Analyze Apple news from last 7 days
+  %(prog)s TSLA --days 30              Analyze Tesla news from last 30 days
+  %(prog)s MSFT --from 2024-01-01      Analyze Microsoft from specific date
+  %(prog)s NVDA --save                 Save results to database
+  %(prog)s AMZN --summary              Show sentiment summary from database
+  %(prog)s AAPL,MSFT,GOOGL --batch     Analyze multiple tickers
+  %(prog)s TSLA --export json          Export results to JSON
+  %(prog)s NVDA --export html          Generate HTML report
+  %(prog)s AAPL --score                Show sentiment score and signal
         """
     )
 
     parser.add_argument(
         "ticker",
         type=str,
-        help="Stock ticker symbol (e.g., AAPL, TSLA, MSFT)"
+        help="Stock ticker symbol(s), comma-separated for batch (e.g., AAPL or AAPL,MSFT,GOOGL)"
     )
 
     parser.add_argument(
@@ -90,6 +96,31 @@ Examples:
         type=int,
         default=50,
         help="Maximum number of news items to analyze (default: 50)"
+    )
+
+    parser.add_argument(
+        "--export",
+        type=str,
+        choices=["json", "csv", "html"],
+        help="Export results to file (json, csv, or html)"
+    )
+
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Enable batch processing for multiple tickers"
+    )
+
+    parser.add_argument(
+        "--score",
+        action="store_true",
+        help="Show sentiment score and trading signal"
+    )
+
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching, always fetch fresh data"
     )
 
     parser.add_argument(
@@ -164,13 +195,55 @@ def display_summary(summary: AnalysisSummary):
     console.print(f"[dim]Success rate:[/dim] {summary.success_rate:.1f}%")
 
 
+def display_score(score: SentimentScore):
+    """Display sentiment score and trading signal."""
+    signal_colors = {
+        "STRONG BUY": "bold green",
+        "BUY": "green",
+        "HOLD": "yellow",
+        "SELL": "red",
+        "STRONG SELL": "bold red"
+    }
+
+    trend_icons = {
+        "improving": "[green]↑[/green]",
+        "declining": "[red]↓[/red]",
+        "stable": "[yellow]→[/yellow]",
+        "insufficient_data": "[dim]?[/dim]"
+    }
+
+    console.print(Panel(
+        f"[bold]{score.ticker} Sentiment Score[/bold]",
+        title="Score Analysis"
+    ))
+
+    color = signal_colors.get(score.signal, "white")
+    trend = trend_icons.get(score.trend or "", "")
+
+    console.print(f"[dim]Signal:[/dim] [{color}]{score.signal}[/{color}] {trend}")
+    console.print(f"[dim]Sentiment:[/dim] {score.sentiment_label}")
+    console.print(f"[dim]Score:[/dim] {score.normalized_score:+.2f} (scale: -1 to +1)")
+    console.print(f"[dim]Confidence:[/dim] {score.confidence:.1%}")
+
+    if score.time_weighted_score is not None:
+        console.print(f"[dim]Time-weighted score:[/dim] {score.time_weighted_score:+.2f}")
+
+    console.print(f"\n[dim]Breakdown:[/dim]")
+    console.print(f"  [green]Positive:[/green] {score.positive_count}")
+    console.print(f"  [yellow]Neutral:[/yellow] {score.neutral_count}")
+    console.print(f"  [red]Negative:[/red] {score.negative_count}")
+
+
 def run_analysis(
     ticker: str,
     time_from: datetime,
     time_to: datetime,
     save: bool = False,
     skip_analysis: bool = False,
-    limit: int = 50
+    limit: int = 50,
+    export_format: Optional[str] = None,
+    show_score: bool = False,
+    use_cache: bool = True
 ) -> Optional[AnalysisSummary]:
     """Run the sentiment analysis pipeline."""
     ticker = ticker.upper()
@@ -212,39 +285,53 @@ def run_analysis(
 
     console.print(f"\n[bold]Running AI sentiment analysis...[/bold]\n")
 
-    for i, news in enumerate(news_list, 1):
-        # Check for duplicates if saving
-        if db and db.check_duplicate(ticker, news.title):
-            logger.debug(f"Skipping duplicate: {news.title[:50]}")
-            continue
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Analyzing...", total=len(news_list))
 
-        analysis_dict = analyze_news_with_gemini(ticker, news.summary)
+        for i, news in enumerate(news_list, 1):
+            # Check for duplicates if saving
+            if db and db.check_duplicate(ticker, news.title):
+                logger.debug(f"Skipping duplicate: {news.title[:50]}")
+                progress.advance(task)
+                continue
 
-        result = AnalysisResult(
-            news=news,
-            ticker=ticker,
-            analysis=None,
-            error=None
-        )
+            analysis_dict = analyze_news_with_gemini(ticker, news.summary)
 
-        if analysis_dict:
-            try:
-                from models import SentimentAnalysis
-                result.analysis = SentimentAnalysis(
-                    SENTIMENT=SentimentCategory(analysis_dict["SENTIMENT"]),
-                    JUSTIFICATION=analysis_dict["JUSTIFICATION"]
-                )
-            except (ValueError, KeyError) as e:
-                result.error = f"Invalid analysis response: {e}"
-        else:
-            result.error = "Analysis returned no result"
+            result = AnalysisResult(
+                news=news,
+                ticker=ticker,
+                analysis=None,
+                error=None
+            )
 
-        results.append(result)
-        display_analysis_result(result, i, len(news_list))
+            if analysis_dict:
+                try:
+                    from models import SentimentAnalysis
+                    result.analysis = SentimentAnalysis(
+                        SENTIMENT=SentimentCategory(analysis_dict["SENTIMENT"]),
+                        JUSTIFICATION=analysis_dict["JUSTIFICATION"]
+                    )
+                except (ValueError, KeyError) as e:
+                    result.error = f"Invalid analysis response: {e}"
+            else:
+                result.error = "Analysis returned no result"
 
-        # Save to database
-        if db:
-            db.save_result(result)
+            results.append(result)
+            progress.advance(task)
+
+            # Save to database
+            if db:
+                db.save_result(result)
+
+    # Display individual results
+    for i, result in enumerate(results, 1):
+        display_analysis_result(result, i, len(results))
 
     # Generate summary
     sentiment_dist = {cat.value: 0 for cat in SentimentCategory}
@@ -264,10 +351,105 @@ def run_analysis(
     console.print("\n")
     display_summary(summary)
 
+    # Show score if requested
+    if show_score and results:
+        score = calculate_trend(results)
+        if score:
+            console.print("\n")
+            display_score(score)
+
+    # Export if requested
+    if export_format and results:
+        console.print("\n")
+        if export_format == "json":
+            filepath = exporter.to_json(results, ticker)
+        elif export_format == "csv":
+            filepath = exporter.to_csv(results, ticker)
+        elif export_format == "html":
+            filepath = exporter.to_html(summary)
+        console.print(f"[dim]Exported to:[/dim] {filepath}")
+
     if save:
         log_success(f"Results saved to database ({len(results)} records)")
 
     return summary
+
+
+def run_batch_analysis(
+    tickers: List[str],
+    time_from: datetime,
+    time_to: datetime,
+    save: bool = False,
+    limit: int = 50,
+    export_format: Optional[str] = None,
+    show_score: bool = False
+) -> dict:
+    """Run analysis for multiple tickers."""
+    results = {}
+
+    console.print(Panel(
+        f"[bold]Batch Analysis[/bold]\n"
+        f"Tickers: {', '.join(tickers)}\n"
+        f"Period: {time_from.strftime('%Y-%m-%d')} to {time_to.strftime('%Y-%m-%d')}",
+        title="IA Trading - Batch Mode"
+    ))
+
+    for i, ticker in enumerate(tickers, 1):
+        console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
+        console.print(f"[bold]Processing {ticker} ({i}/{len(tickers)})[/bold]")
+        console.print(f"[bold cyan]{'='*60}[/bold cyan]\n")
+
+        summary = run_analysis(
+            ticker=ticker,
+            time_from=time_from,
+            time_to=time_to,
+            save=save,
+            limit=limit,
+            export_format=export_format,
+            show_score=show_score
+        )
+
+        if summary:
+            results[ticker] = summary
+
+    # Display batch summary
+    if results and show_score:
+        console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
+        console.print("[bold]Batch Summary - All Tickers[/bold]")
+        console.print(f"[bold cyan]{'='*60}[/bold cyan]\n")
+
+        table = Table(title="Sentiment Scores")
+        table.add_column("Ticker", style="cyan")
+        table.add_column("Signal", justify="center")
+        table.add_column("Score", justify="right")
+        table.add_column("Positive", justify="right", style="green")
+        table.add_column("Neutral", justify="right", style="yellow")
+        table.add_column("Negative", justify="right", style="red")
+
+        signal_colors = {
+            "STRONG BUY": "bold green",
+            "BUY": "green",
+            "HOLD": "yellow",
+            "SELL": "red",
+            "STRONG SELL": "bold red"
+        }
+
+        for ticker, summary in results.items():
+            score = calculate_trend(summary.results)
+            if score:
+                color = signal_colors.get(score.signal, "white")
+                table.add_row(
+                    ticker,
+                    f"[{color}]{score.signal}[/{color}]",
+                    f"{score.normalized_score:+.2f}",
+                    str(score.positive_count),
+                    str(score.neutral_count),
+                    str(score.negative_count)
+                )
+
+        console.print(table)
+
+    return results
 
 
 def show_database_summary(ticker: str):
@@ -313,16 +495,33 @@ def main():
         console.print("[red]Please ensure your .env file contains valid API keys[/red]")
         sys.exit(1)
 
+    # Parse tickers
+    tickers = [t.strip().upper() for t in args.ticker.split(",")]
+
     if args.summary:
-        show_database_summary(args.ticker)
+        for ticker in tickers:
+            show_database_summary(ticker)
+    elif args.batch or len(tickers) > 1:
+        run_batch_analysis(
+            tickers=tickers,
+            time_from=time_from,
+            time_to=time_to,
+            save=args.save,
+            limit=args.limit,
+            export_format=args.export,
+            show_score=args.score
+        )
     else:
         run_analysis(
-            ticker=args.ticker,
+            ticker=tickers[0],
             time_from=time_from,
             time_to=time_to,
             save=args.save,
             skip_analysis=args.no_analyze,
-            limit=args.limit
+            limit=args.limit,
+            export_format=args.export,
+            show_score=args.score,
+            use_cache=not args.no_cache
         )
 
 

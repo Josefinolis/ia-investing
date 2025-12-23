@@ -24,6 +24,12 @@ __pycache__/
 *.sqlite
 *.sqlite3
 
+# Cache
+.cache/
+
+# Exports
+exports/
+
 # Logs
 *.log
 logs/
