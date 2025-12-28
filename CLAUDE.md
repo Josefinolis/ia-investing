@@ -60,6 +60,36 @@ python main.py AAPL --summary
 python main.py TSLA --no-cache
 ```
 
+### Running the API Server
+
+The project includes a FastAPI backend for the mobile app and web clients.
+
+```bash
+# Activate virtual environment
+cd /home/os_uis/projects/ia_trading
+source venv/bin/activate
+
+# Start the API server (development)
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# With auto-reload for development
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**API Endpoints:**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | API info |
+| `GET /health` | Health check |
+| `GET /docs` | Swagger UI documentation |
+| `GET /api/tickers` | List all tracked tickers |
+| `POST /api/tickers` | Add a new ticker |
+| `GET /api/tickers/{symbol}` | Get ticker details with news |
+| `DELETE /api/tickers/{symbol}` | Remove a ticker |
+| `GET /api/scheduler/status` | Scheduler status |
+
+**For Android Emulator:** The app connects to `http://10.0.2.2:8000` (maps to host's localhost:8000).
+
 ---
 
 ## Architecture
@@ -185,7 +215,7 @@ class SentimentCategory(str, Enum):
 ### Settings (config.py)
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `gemini_model` | gemini-2.5-flash | AI model to use |
+| `gemini_model` | gemini-2.5-flash-lite | AI model to use |
 | `max_retries` | 3 | API retry attempts |
 | `database_url` | sqlite:///ia_trading.db | Database location |
 | `alpha_vantage_calls_per_minute` | 5 | Rate limit |
@@ -245,6 +275,24 @@ ia_trading/
 
 The tool handles rate limiting automatically with `ratelimit` and `tenacity` libraries.
 
+### Alpha Vantage NEWS_SENTIMENT Parameters
+
+The API supports querying news **without specifying a ticker** using topics:
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `function` | Yes | `NEWS_SENTIMENT` |
+| `apikey` | Yes | API key |
+| `tickers` | No | Filter by stock/crypto/forex symbols |
+| `topics` | No | Filter by news categories |
+| `time_from` / `time_to` | No | Date range (format: YYYYMMDDTHHMM) |
+| `sort` / `limit` | No | Sort order and max results |
+
+**Available topics:**
+`blockchain`, `earnings`, `ipo`, `mergers_and_acquisitions`, `financial_markets`, `economy_fiscal`, `economy_monetary`, `economy_macro`, `energy_transportation`, `finance`, `life_sciences`, `manufacturing`, `real_estate`, `retail_wholesale`, `technology`
+
+> **Note:** Currently the app always requires a ticker. A future enhancement could allow topic-based queries without a specific ticker.
+
 ---
 
 ## Future Enhancements
@@ -256,6 +304,7 @@ See `IMPROVEMENTS.md` for detailed roadmap. Key items:
 - Web dashboard (Streamlit)
 - Docker containerization
 - Historical price correlation
+- Topic-based news queries (without requiring a specific ticker)
 
 ---
 
