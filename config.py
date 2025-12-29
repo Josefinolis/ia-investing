@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     # API Configuration
     alpha_vantage_base_url: str = "https://www.alphavantage.co/query"
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-2.5-flash-lite"
 
     # Rate Limiting
     alpha_vantage_calls_per_minute: int = 5

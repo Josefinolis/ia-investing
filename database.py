@@ -2,14 +2,92 @@
 
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import create_engine, Column, String, Float, DateTime, Integer, Text, Enum as SQLEnum
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy import create_engine, Column, String, Float, DateTime, Integer, Text, Boolean, ForeignKey, Enum as SQLEnum
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
 from config import get_settings
 from models import SentimentCategory, AnalysisResult, NewsItem, SentimentAnalysis
 from logger import logger
 
 Base = declarative_base()
+
+
+# =============================================================================
+# New Models for Web/Mobile App
+# =============================================================================
+
+class WatchlistTicker(Base):
+    """Tickers being followed/watched."""
+    __tablename__ = "watchlist_tickers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(10), nullable=False, unique=True, index=True)
+    name = Column(String(200))  # Optional company name
+    added_at = Column(DateTime, default=datetime.now)
+    is_active = Column(Boolean, default=True)
+
+    # Relationships
+    news_items = relationship("NewsRecord", back_populates="watchlist_ticker")
+    sentiment = relationship("TickerSentiment", back_populates="watchlist_ticker", uselist=False)
+
+
+class NewsRecord(Base):
+    """News items with analysis status tracking."""
+    __tablename__ = "news_records"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(10), ForeignKey("watchlist_tickers.ticker"), nullable=False, index=True)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text, nullable=False)
+    published_date = Column(String(50))
+    source = Column(String(200))
+    url = Column(String(500), unique=True, index=True)  # URL as dedup key
+    relevance_score = Column(Float)
+
+    # Status tracking
+    status = Column(String(20), default="pending", index=True)  # "pending" or "analyzed"
+    fetched_at = Column(DateTime, default=datetime.now)
+    analyzed_at = Column(DateTime, nullable=True)
+
+    # Analysis results (populated after analysis)
+    sentiment = Column(String(30), nullable=True)  # SentimentCategory value
+    justification = Column(Text, nullable=True)
+
+    # Relationships
+    watchlist_ticker = relationship("WatchlistTicker", back_populates="news_items")
+
+
+class TickerSentiment(Base):
+    """Aggregated sentiment per ticker."""
+    __tablename__ = "ticker_sentiments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String(10), ForeignKey("watchlist_tickers.ticker"), nullable=False, unique=True, index=True)
+
+    # Sentiment scores
+    score = Column(Float, default=0.0)  # Raw score
+    normalized_score = Column(Float, default=0.0)  # -1 to 1 scale
+    sentiment_label = Column(String(30))  # "Highly Positive", etc.
+    signal = Column(String(20))  # "STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"
+    confidence = Column(Float, default=0.0)
+
+    # Counts
+    positive_count = Column(Integer, default=0)
+    negative_count = Column(Integer, default=0)
+    neutral_count = Column(Integer, default=0)
+    total_analyzed = Column(Integer, default=0)
+    total_pending = Column(Integer, default=0)
+
+    # Timestamps
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    # Relationships
+    watchlist_ticker = relationship("WatchlistTicker", back_populates="sentiment")
+
+
+# =============================================================================
+# Original Model (kept for backward compatibility)
+# =============================================================================
 
 
 class AnalysisRecord(Base):

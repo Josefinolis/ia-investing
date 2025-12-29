@@ -27,7 +27,7 @@ class TestSettings:
         }):
             settings = Settings()
             assert settings.alpha_vantage_base_url == "https://www.alphavantage.co/query"
-            assert settings.gemini_model == "gemini-2.5-flash"
+            assert settings.gemini_model == "gemini-2.5-flash-lite"
             assert settings.max_retries == 3
             assert settings.log_level == "INFO"
 

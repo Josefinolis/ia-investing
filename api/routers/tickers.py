@@ -1,0 +1,242 @@
+"""Tickers API router."""
+
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Query
+
+from api.schemas import (
+    TickerCreate,
+    TickerResponse,
+    TickerListResponse,
+    TickerSentimentResponse,
+    NewsListResponse,
+    NewsItemResponse,
+    NewsStatus
+)
+from services.watchlist_service import (
+    get_all_tickers,
+    get_ticker,
+    add_ticker,
+    remove_ticker
+)
+from services.news_service import get_news_by_ticker, get_news_counts
+from services.sentiment_service import get_ticker_sentiment
+from schedulers.news_fetcher import fetch_news_for_ticker
+from logger import logger
+
+router = APIRouter()
+
+
+@router.get("", response_model=TickerListResponse)
+async def list_tickers():
+    """Get all watched tickers with their sentiment."""
+    tickers = get_all_tickers()
+
+    ticker_responses = []
+    for t in tickers:
+        sentiment_response = None
+        if t.sentiment:
+            sentiment_response = TickerSentimentResponse(
+                ticker=t.sentiment.ticker,
+                score=t.sentiment.score,
+                normalized_score=t.sentiment.normalized_score,
+                sentiment_label=t.sentiment.sentiment_label,
+                signal=t.sentiment.signal,
+                confidence=t.sentiment.confidence,
+                positive_count=t.sentiment.positive_count,
+                negative_count=t.sentiment.negative_count,
+                neutral_count=t.sentiment.neutral_count,
+                total_analyzed=t.sentiment.total_analyzed,
+                total_pending=t.sentiment.total_pending,
+                updated_at=t.sentiment.updated_at
+            )
+
+        ticker_responses.append(TickerResponse(
+            id=t.id,
+            ticker=t.ticker,
+            name=t.name,
+            added_at=t.added_at,
+            is_active=t.is_active,
+            sentiment=sentiment_response
+        ))
+
+    return TickerListResponse(
+        tickers=ticker_responses,
+        count=len(ticker_responses)
+    )
+
+
+@router.post("", response_model=TickerResponse, status_code=201)
+async def create_ticker(ticker_data: TickerCreate):
+    """Add a new ticker to the watchlist."""
+    ticker = add_ticker(ticker_data.ticker, ticker_data.name)
+
+    sentiment_response = None
+    if ticker.sentiment:
+        sentiment_response = TickerSentimentResponse(
+            ticker=ticker.sentiment.ticker,
+            score=ticker.sentiment.score,
+            normalized_score=ticker.sentiment.normalized_score,
+            sentiment_label=ticker.sentiment.sentiment_label,
+            signal=ticker.sentiment.signal,
+            confidence=ticker.sentiment.confidence,
+            positive_count=ticker.sentiment.positive_count,
+            negative_count=ticker.sentiment.negative_count,
+            neutral_count=ticker.sentiment.neutral_count,
+            total_analyzed=ticker.sentiment.total_analyzed,
+            total_pending=ticker.sentiment.total_pending,
+            updated_at=ticker.sentiment.updated_at
+        )
+
+    # Trigger initial news fetch in background
+    try:
+        fetch_news_for_ticker(ticker.ticker, hours=24)
+    except Exception as e:
+        logger.warning(f"Initial news fetch failed for {ticker.ticker}: {e}")
+
+    return TickerResponse(
+        id=ticker.id,
+        ticker=ticker.ticker,
+        name=ticker.name,
+        added_at=ticker.added_at,
+        is_active=ticker.is_active,
+        sentiment=sentiment_response
+    )
+
+
+@router.delete("/{ticker_symbol}", status_code=204)
+async def delete_ticker(ticker_symbol: str):
+    """Remove a ticker from the watchlist."""
+    success = remove_ticker(ticker_symbol)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    return None
+
+
+@router.get("/{ticker_symbol}", response_model=TickerResponse)
+async def get_ticker_detail(ticker_symbol: str):
+    """Get details for a specific ticker."""
+    ticker = get_ticker(ticker_symbol)
+
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    sentiment_response = None
+    if ticker.sentiment:
+        sentiment_response = TickerSentimentResponse(
+            ticker=ticker.sentiment.ticker,
+            score=ticker.sentiment.score,
+            normalized_score=ticker.sentiment.normalized_score,
+            sentiment_label=ticker.sentiment.sentiment_label,
+            signal=ticker.sentiment.signal,
+            confidence=ticker.sentiment.confidence,
+            positive_count=ticker.sentiment.positive_count,
+            negative_count=ticker.sentiment.negative_count,
+            neutral_count=ticker.sentiment.neutral_count,
+            total_analyzed=ticker.sentiment.total_analyzed,
+            total_pending=ticker.sentiment.total_pending,
+            updated_at=ticker.sentiment.updated_at
+        )
+
+    return TickerResponse(
+        id=ticker.id,
+        ticker=ticker.ticker,
+        name=ticker.name,
+        added_at=ticker.added_at,
+        is_active=ticker.is_active,
+        sentiment=sentiment_response
+    )
+
+
+@router.get("/{ticker_symbol}/news", response_model=NewsListResponse)
+async def get_ticker_news(
+    ticker_symbol: str,
+    status: Optional[str] = Query(None, description="Filter by status: pending, analyzed"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0)
+):
+    """Get news items for a ticker."""
+    ticker = get_ticker(ticker_symbol)
+
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    news_list = get_news_by_ticker(
+        ticker_symbol=ticker_symbol,
+        status=status,
+        limit=limit,
+        offset=offset
+    )
+
+    counts = get_news_counts(ticker_symbol)
+
+    news_responses = [
+        NewsItemResponse(
+            id=n.id,
+            ticker=n.ticker,
+            title=n.title,
+            summary=n.summary,
+            published_date=n.published_date,
+            source=n.source,
+            url=n.url,
+            relevance_score=n.relevance_score,
+            status=NewsStatus(n.status),
+            sentiment=n.sentiment,
+            justification=n.justification,
+            fetched_at=n.fetched_at,
+            analyzed_at=n.analyzed_at
+        )
+        for n in news_list
+    ]
+
+    return NewsListResponse(
+        news=news_responses,
+        count=len(news_responses),
+        pending_count=counts["pending"],
+        analyzed_count=counts["analyzed"]
+    )
+
+
+@router.get("/{ticker_symbol}/sentiment", response_model=TickerSentimentResponse)
+async def get_ticker_sentiment_endpoint(ticker_symbol: str):
+    """Get aggregated sentiment for a ticker."""
+    ticker = get_ticker(ticker_symbol)
+
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    sentiment = get_ticker_sentiment(ticker_symbol)
+
+    if not sentiment:
+        raise HTTPException(status_code=404, detail="No sentiment data available")
+
+    return TickerSentimentResponse(
+        ticker=sentiment.ticker,
+        score=sentiment.score,
+        normalized_score=sentiment.normalized_score,
+        sentiment_label=sentiment.sentiment_label,
+        signal=sentiment.signal,
+        confidence=sentiment.confidence,
+        positive_count=sentiment.positive_count,
+        negative_count=sentiment.negative_count,
+        neutral_count=sentiment.neutral_count,
+        total_analyzed=sentiment.total_analyzed,
+        total_pending=sentiment.total_pending,
+        updated_at=sentiment.updated_at
+    )
+
+
+@router.post("/{ticker_symbol}/fetch", status_code=202)
+async def trigger_fetch(ticker_symbol: str, hours: int = Query(24, ge=1, le=168)):
+    """Trigger news fetch for a specific ticker."""
+    ticker = get_ticker(ticker_symbol)
+
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    try:
+        saved = fetch_news_for_ticker(ticker_symbol, hours=hours)
+        return {"message": f"Fetched {saved} news items for {ticker_symbol}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

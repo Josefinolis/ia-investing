@@ -25,7 +25,8 @@ def _get_client() -> genai.Client:
     global _client
     if _client is None:
         try:
-            _client = genai.Client()
+            settings = get_settings()
+            _client = genai.Client(api_key=settings.gemini_api_key)
             logger.debug("Gemini client initialized successfully")
         except Exception as e:
             log_error("Failed to initialize Gemini client", e)

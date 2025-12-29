@@ -206,6 +206,48 @@ Note: This runs without arguments. For custom arguments, use the terminal or lau
 }
 ```
 
+## Running the API Server
+
+The project includes a FastAPI backend for mobile apps and web clients.
+
+### Start the Server
+
+```bash
+# Activate virtual environment
+cd /home/os_uis/projects/ia_trading
+source venv/bin/activate
+
+# Start the API server
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# With auto-reload for development
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | API info |
+| `/health` | GET | Health check |
+| `/docs` | GET | Swagger UI documentation |
+| `/api/tickers` | GET | List all tracked tickers |
+| `/api/tickers` | POST | Add a new ticker |
+| `/api/tickers/{symbol}` | GET | Get ticker details with news |
+| `/api/tickers/{symbol}` | DELETE | Remove a ticker |
+| `/api/scheduler/status` | GET | Scheduler status |
+| `/api/scheduler/trigger/{job_id}` | POST | Manually trigger a job |
+
+### Connecting from Mobile Devices
+
+- **Android Emulator**: Use `http://10.0.2.2:8000` (maps to host's localhost)
+- **Physical Device**: Use your computer's local IP address (e.g., `http://192.168.1.100:8000`)
+
+To find your computer's IP:
+```bash
+hostname -I | awk '{print $1}'
+```
+
 ## Running Tests
 
 ```bash
@@ -237,6 +279,19 @@ ia_trading/
 ├── requirements.txt     # Dependencies
 ├── .env                 # API keys (not in git)
 ├── .env.example         # Template for .env
+├── api/                 # FastAPI REST API
+│   ├── main.py          # API entry point
+│   ├── schemas.py       # Pydantic API schemas
+│   └── routers/         # API route handlers
+│       └── tickers.py   # Ticker endpoints
+├── services/            # Business logic services
+│   ├── news_service.py
+│   ├── sentiment_service.py
+│   └── watchlist_service.py
+├── schedulers/          # Background job schedulers
+│   ├── scheduler.py
+│   ├── analyzer.py
+│   └── news_fetcher.py
 └── tests/               # Unit tests
 ```
 
