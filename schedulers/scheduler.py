@@ -37,17 +37,19 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # Add analyzer job - every 1 minute (only calls AI if there are pending news)
+    # Add analyzer job - every 5 minutes (only calls AI if there are pending news)
     scheduler.add_job(
         analyze_pending_news_job,
-        trigger=IntervalTrigger(minutes=1),
+        trigger=IntervalTrigger(minutes=5),
         id="news_analyzer",
         name="Analyze pending news",
-        replace_existing=True
+        replace_existing=True,
+        coalesce=True,  # Combine missed runs into one
+        max_instances=1  # Only one instance at a time
     )
 
     scheduler.start()
-    logger.info("Scheduler started with jobs: news_fetcher (30m), news_analyzer (1m)")
+    logger.info("Scheduler started with jobs: news_fetcher (30m), news_analyzer (5m)")
 
 
 def stop_scheduler():
