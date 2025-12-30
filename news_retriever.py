@@ -10,6 +10,7 @@ from config import get_settings
 from models import NewsItem
 from logger import logger, log_api_call, log_error, log_warning
 from cache import news_cache
+from rate_limit_manager import get_rate_limit_manager
 
 DATE_FORMAT = "%Y%m%dT%H%M"
 
@@ -55,6 +56,15 @@ def fetch_news_data(
     Raises:
         NewsRetrievalError: If unable to fetch news after retries
     """
+    # Check if Alpha Vantage is in cooldown
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.alpha_vantage.is_available():
+        remaining = rate_limiter.alpha_vantage.get_remaining_cooldown()
+        logger.warning(
+            f"Alpha Vantage API in cooldown, {remaining}s remaining. Skipping fetch."
+        )
+        raise NewsRetrievalError(f"API in cooldown, {remaining}s remaining")
+
     settings = get_settings()
 
     # Check cache first
@@ -77,10 +87,31 @@ def fetch_news_data(
 
         # Check for API error messages
         if "Error Message" in data:
-            raise NewsRetrievalError(f"API Error: {data['Error Message']}")
+            error_msg = data['Error Message']
+            raise NewsRetrievalError(f"API Error: {error_msg}")
 
+        # Check for rate limit messages
         if "Note" in data:
-            log_warning(f"API Note: {data['Note']}")
+            note = data['Note']
+            log_warning(f"API Note: {note}")
+
+            # Check if it's a rate limit message
+            if "rate limit" in note.lower() or "frequency" in note.lower() or "call volume" in note.lower():
+                rate_limiter.alpha_vantage.enter_cooldown(
+                    f"Rate limit exceeded: {note}",
+                    cooldown_seconds=60
+                )
+                raise NewsRetrievalError(f"Rate limit exceeded: {note}")
+
+        # Check for Information messages (also used for rate limiting)
+        if "Information" in data:
+            info = data['Information']
+            if "rate limit" in info.lower() or "frequency" in info.lower():
+                rate_limiter.alpha_vantage.enter_cooldown(
+                    f"Rate limit exceeded: {info}",
+                    cooldown_seconds=60
+                )
+                raise NewsRetrievalError(f"Rate limit exceeded: {info}")
 
         news_list = _process_response(data)
 
@@ -94,6 +125,19 @@ def fetch_news_data(
     except requests.exceptions.Timeout:
         log_error("Request timed out")
         raise NewsRetrievalError("Request timed out")
+
+    except requests.exceptions.HTTPError as e:
+        # Check for 429 status code
+        if e.response.status_code == 429:
+            rate_limiter.alpha_vantage.enter_cooldown(
+                "Rate limit exceeded (429)",
+                cooldown_seconds=60
+            )
+            logger.error(f"Alpha Vantage rate limit exceeded: {e}")
+            raise NewsRetrievalError("Rate limit exceeded (429)")
+
+        log_error("HTTP request failed", e)
+        raise NewsRetrievalError(f"HTTP request failed: {e}")
 
     except requests.exceptions.RequestException as e:
         log_error("HTTP request failed", e)

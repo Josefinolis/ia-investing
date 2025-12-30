@@ -5,9 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers import tickers
-from api.schemas import HealthResponse
+from api.schemas import HealthResponse, ApiStatusResponse, ApiServiceStatus
 from database import get_database
 from schedulers.scheduler import start_scheduler, stop_scheduler, get_scheduler_status
+from rate_limit_manager import get_rate_limit_manager
 from logger import logger
 
 
@@ -97,3 +98,15 @@ async def trigger_job(job_id: str):
         return {"message": f"Job {job_id} triggered"}
     else:
         return {"error": f"Job {job_id} not found"}
+
+
+@app.get("/api/status", response_model=ApiStatusResponse, tags=["status"])
+async def api_status():
+    """Get API rate limit status for all services."""
+    rate_limiter = get_rate_limit_manager()
+    status_data = rate_limiter.get_all_status()
+
+    return ApiStatusResponse(
+        gemini=ApiServiceStatus(**status_data["gemini"]),
+        alpha_vantage=ApiServiceStatus(**status_data["alpha_vantage"])
+    )

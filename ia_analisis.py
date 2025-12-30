@@ -4,12 +4,14 @@ import json
 from typing import Optional, Dict, Any
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 from ratelimit import limits, sleep_and_retry
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from config import get_settings
 from models import SentimentAnalysis
 from logger import logger, log_api_call, log_error
+from rate_limit_manager import get_rate_limit_manager
 
 # Module-level client (initialized lazily)
 _client: Optional[genai.Client] = None
@@ -75,6 +77,15 @@ def analyze_sentiment(
     Returns:
         SentimentAnalysis object if successful, None otherwise
     """
+    # Check if Gemini is in cooldown
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.gemini.is_available():
+        remaining = rate_limiter.gemini.get_remaining_cooldown()
+        logger.warning(
+            f"Gemini API in cooldown, {remaining}s remaining. Skipping analysis."
+        )
+        return None
+
     settings = get_settings()
     client = _get_client()
 
@@ -96,12 +107,34 @@ def analyze_sentiment(
         result = json.loads(response.text)
         return SentimentAnalysis(**result)
 
+    except ClientError as e:
+        # Check for 429 rate limit error
+        error_str = str(e)
+        if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+            rate_limiter.gemini.enter_cooldown(
+                "Rate limit exceeded (429)",
+                cooldown_seconds=60
+            )
+            logger.error(f"Gemini rate limit exceeded: {e}")
+        else:
+            log_error("Gemini client error", e)
+        return None
+
     except json.JSONDecodeError as e:
         log_error("Gemini returned invalid JSON", e)
         return None
 
     except Exception as e:
-        log_error("Gemini API call failed", e)
+        # Check if it's a rate limit error in the exception message
+        error_str = str(e)
+        if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+            rate_limiter.gemini.enter_cooldown(
+                "Rate limit exceeded",
+                cooldown_seconds=60
+            )
+            logger.error(f"Gemini rate limit exceeded: {e}")
+        else:
+            log_error("Gemini API call failed", e)
         return None
 
 

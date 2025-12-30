@@ -6,11 +6,19 @@ from services.watchlist_service import get_all_tickers
 from services.news_service import save_news_items
 from news_retriever import fetch_news_data, NewsRetrievalError
 from logger import logger
+from rate_limit_manager import get_rate_limit_manager
 
 
 def fetch_all_news_job():
     """Fetch news for all active tickers in the watchlist."""
     logger.info("Starting news fetch job...")
+
+    # Check if Alpha Vantage is available
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.alpha_vantage.is_available():
+        remaining = rate_limiter.alpha_vantage.get_remaining_cooldown()
+        logger.info(f"Alpha Vantage API in cooldown, {remaining}s remaining. Skipping fetch job.")
+        return
 
     tickers = get_all_tickers(include_inactive=False)
 

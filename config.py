@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     retry_delay_seconds: float = 1.0
 
     # Database
-    database_url: str = "sqlite:///ia_trading.db"
+    database_url: Optional[str] = Field(None, validation_alias="DATABASE_URL")
+    database_fallback_url: str = "sqlite:///ia_trading.db"
 
     # Logging
     log_level: str = "INFO"

@@ -142,8 +142,35 @@ class Database:
 
     def __init__(self, database_url: Optional[str] = None):
         settings = get_settings()
-        self.database_url = database_url or settings.database_url
-        self.engine = create_engine(self.database_url, echo=False)
+
+        # Determine which database URL to use
+        if database_url:
+            self.database_url = database_url
+        elif settings.database_url:
+            self.database_url = settings.database_url
+        else:
+            self.database_url = settings.database_fallback_url
+
+        # Log database type being used
+        if self.database_url.startswith("postgresql"):
+            logger.info("Using PostgreSQL database")
+        else:
+            logger.info("Using SQLite database")
+
+        # Create engine with appropriate settings
+        if self.database_url.startswith("postgresql"):
+            # PostgreSQL-specific settings
+            self.engine = create_engine(
+                self.database_url,
+                echo=False,
+                pool_pre_ping=True,  # Verify connections before using
+                pool_size=5,
+                max_overflow=10
+            )
+        else:
+            # SQLite settings
+            self.engine = create_engine(self.database_url, echo=False)
+
         self.SessionLocal = sessionmaker(bind=self.engine)
 
     def init_db(self):

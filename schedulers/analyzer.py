@@ -6,11 +6,19 @@ from services.news_service import get_pending_news, update_news_analysis
 from services.sentiment_service import update_ticker_sentiment
 from ia_analisis import analyze_sentiment, AnalysisError
 from logger import logger
+from rate_limit_manager import get_rate_limit_manager
 
 
 def analyze_pending_news_job(batch_size: int = 10):
     """Analyze pending news items."""
     logger.info("Starting news analysis job...")
+
+    # Check if Gemini is available
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.gemini.is_available():
+        remaining = rate_limiter.gemini.get_remaining_cooldown()
+        logger.info(f"Gemini API in cooldown, {remaining}s remaining. Skipping analysis job.")
+        return
 
     pending_news = get_pending_news(limit=batch_size)
 
@@ -68,6 +76,13 @@ def analyze_pending_news_job(batch_size: int = 10):
 def analyze_all_pending():
     """Analyze all pending news (no batch limit)."""
     logger.info("Analyzing all pending news...")
+
+    # Check if Gemini is available
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.gemini.is_available():
+        remaining = rate_limiter.gemini.get_remaining_cooldown()
+        logger.info(f"Gemini API in cooldown, {remaining}s remaining. Skipping analysis.")
+        return 0
 
     pending_news = get_pending_news(limit=1000)  # Large limit
 

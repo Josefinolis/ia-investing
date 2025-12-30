@@ -115,6 +115,23 @@ class HealthResponse(BaseModel):
 
 
 # =============================================================================
+# API Status
+# =============================================================================
+
+class ApiServiceStatus(BaseModel):
+    """Status of an API service."""
+    available: bool
+    cooldown_until: Optional[str] = None
+    message: Optional[str] = None
+
+
+class ApiStatusResponse(BaseModel):
+    """API rate limit status response."""
+    gemini: ApiServiceStatus
+    alpha_vantage: ApiServiceStatus
+
+
+# =============================================================================
 # Error Response
 # =============================================================================
 
