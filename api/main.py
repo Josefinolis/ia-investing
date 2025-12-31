@@ -93,13 +93,38 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check():
-    """Health check endpoint."""
-    scheduler_status = get_scheduler_status()
-
+    """Health check endpoint - lightweight, no DB call."""
+    # Don't touch DB here to keep health check fast
+    # This prevents Render from marking the service as unhealthy during cold starts
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        database="connected",
+        database="unknown",  # Don't check DB in health endpoint
+        scheduler="unknown"
+    )
+
+
+@app.get("/health/full", response_model=HealthResponse, tags=["health"])
+async def health_check_full():
+    """Full health check with database verification."""
+    scheduler_status = get_scheduler_status()
+
+    # Test database connection
+    from sqlalchemy import text
+    db_status = "unknown"
+    try:
+        db = get_database()
+        with db.get_session() as session:
+            session.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = "error"
+
+    return HealthResponse(
+        status="healthy" if db_status == "connected" else "degraded",
+        version="1.0.0",
+        database=db_status,
         scheduler="running" if scheduler_status["running"] else "stopped"
     )
 

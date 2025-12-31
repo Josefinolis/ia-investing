@@ -159,14 +159,21 @@ class Database:
 
         # Create engine with appropriate settings
         if self.database_url.startswith("postgresql"):
-            # PostgreSQL-specific settings
+            # PostgreSQL-specific settings with connection timeout
+            logger.info("[DB] Creating PostgreSQL engine with connection timeout...")
             self.engine = create_engine(
                 self.database_url,
                 echo=False,
                 pool_pre_ping=True,  # Verify connections before using
-                pool_size=5,
-                max_overflow=10
+                pool_size=3,  # Reduced for free tier
+                max_overflow=5,
+                pool_timeout=30,  # Wait max 30s for connection
+                connect_args={
+                    "connect_timeout": 30,  # PostgreSQL connection timeout
+                    "options": "-c statement_timeout=30000"  # 30s query timeout
+                }
             )
+            logger.info("[DB] PostgreSQL engine created")
         else:
             # SQLite settings
             self.engine = create_engine(self.database_url, echo=False)
