@@ -92,7 +92,7 @@ jobs:
               --name ia-trading-api \
               --network ia-trading-network \
               --restart unless-stopped \
-              -p 8000:8000 \
+              -p 80:8000 \
               -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
               -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
