@@ -105,4 +105,4 @@ jobs:
 
             # Health check
             sleep 10
-            curl -f http://localhost:8000/health || exit 1
+            curl -f http://localhost/health || exit 1
