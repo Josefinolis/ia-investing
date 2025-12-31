@@ -1,7 +1,7 @@
 """Tickers API router."""
 
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 
 from api.schemas import (
     TickerCreate,
@@ -65,8 +65,17 @@ async def list_tickers():
     )
 
 
+def _background_fetch_news(ticker_symbol: str, hours: int = 24):
+    """Background task to fetch news for a ticker."""
+    try:
+        result = fetch_news_for_ticker(ticker_symbol, hours=hours)
+        logger.info(f"Background fetch completed for {ticker_symbol}: {result}")
+    except Exception as e:
+        logger.warning(f"Background news fetch failed for {ticker_symbol}: {e}")
+
+
 @router.post("", response_model=TickerResponse, status_code=201)
-async def create_ticker(ticker_data: TickerCreate):
+async def create_ticker(ticker_data: TickerCreate, background_tasks: BackgroundTasks):
     """Add a new ticker to the watchlist."""
     ticker = add_ticker(ticker_data.ticker, ticker_data.name)
 
@@ -87,11 +96,8 @@ async def create_ticker(ticker_data: TickerCreate):
             updated_at=ticker.sentiment.updated_at
         )
 
-    # Trigger initial news fetch in background
-    try:
-        fetch_news_for_ticker(ticker.ticker, hours=24)
-    except Exception as e:
-        logger.warning(f"Initial news fetch failed for {ticker.ticker}: {e}")
+    # Trigger initial news fetch in background (non-blocking)
+    background_tasks.add_task(_background_fetch_news, ticker.ticker, 24)
 
     return TickerResponse(
         id=ticker.id,
@@ -228,15 +234,16 @@ async def get_ticker_sentiment_endpoint(ticker_symbol: str):
 
 
 @router.post("/{ticker_symbol}/fetch", status_code=202)
-async def trigger_fetch(ticker_symbol: str, hours: int = Query(24, ge=1, le=168)):
-    """Trigger news fetch for a specific ticker."""
+async def trigger_fetch(
+    ticker_symbol: str,
+    background_tasks: BackgroundTasks,
+    hours: int = Query(24, ge=1, le=168)
+):
+    """Trigger news fetch for a specific ticker (runs in background)."""
     ticker = get_ticker(ticker_symbol)
 
     if not ticker:
         raise HTTPException(status_code=404, detail="Ticker not found")
 
-    try:
-        saved = fetch_news_for_ticker(ticker_symbol, hours=hours)
-        return {"message": f"Fetched {saved} news items for {ticker_symbol}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    background_tasks.add_task(_background_fetch_news, ticker_symbol, hours)
+    return {"message": f"News fetch started for {ticker_symbol}", "status": "processing"}
