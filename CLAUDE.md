@@ -60,9 +60,17 @@ python main.py AAPL --summary
 python main.py TSLA --no-cache
 ```
 
-### Running the API Server
+### Production API
 
-The project includes a FastAPI backend for the mobile app and web clients.
+The API is deployed on a VPS (IONOS Debian 12) with automatic deployment via GitHub Actions.
+
+**Production URL:** http://195.20.235.94
+
+**Deployment:** Push to `master` triggers automatic build and deploy.
+
+See `VPS_SETUP.md` for deployment details.
+
+### Running Locally (Development)
 
 ```bash
 # Activate virtual environment
@@ -86,9 +94,12 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | `POST /api/tickers` | Add a new ticker |
 | `GET /api/tickers/{symbol}` | Get ticker details with news |
 | `DELETE /api/tickers/{symbol}` | Remove a ticker |
-| `GET /api/scheduler/status` | Scheduler status |
+| `GET /api/jobs/status` | Job tracker status |
+| `POST /api/jobs/fetch` | Trigger news fetch manually |
+| `POST /api/jobs/analyze` | Trigger analysis manually |
 
-**For Android Emulator:** The app connects to `http://10.0.2.2:8000` (maps to host's localhost:8000).
+**For Android Emulator:** Use `http://10.0.2.2:8000` (maps to host's localhost:8000).
+**For Physical Device:** Use `http://195.20.235.94` (production VPS).
 
 ---
 
