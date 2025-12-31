@@ -96,7 +96,7 @@ jobs:
               -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
               -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
-              -e SCHEDULER_ENABLED=true \
+              -e SCHEDULER_ENABLED=false \
               -e LOG_LEVEL=INFO \
               ghcr.io/josefinolis/ia-investing:latest
 
