@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    # Scheduler
+    scheduler_enabled: bool = Field(False, validation_alias="SCHEDULER_ENABLED")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

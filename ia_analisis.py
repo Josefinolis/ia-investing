@@ -1,6 +1,7 @@
 """AI-powered news sentiment analysis using Google Gemini."""
 
 import json
+import time
 from typing import Optional, Dict, Any
 from google import genai
 from google.genai import types
@@ -48,11 +49,19 @@ def _rate_limited_generate(
     config: types.GenerateContentConfig
 ) -> Any:
     """Make a rate-limited Gemini API call."""
-    return client.models.generate_content(
+    limiter_start = time.perf_counter()
+    logger.debug("Entering rate limiter for Gemini API call...")
+
+    result = client.models.generate_content(
         model=model,
         contents=prompt,
         config=config
     )
+
+    limiter_elapsed = time.perf_counter() - limiter_start
+    logger.debug(f"Rate limiter wait completed in {limiter_elapsed:.3f}s")
+
+    return result
 
 
 @retry(
@@ -97,12 +106,16 @@ def analyze_sentiment(
 
     try:
         log_api_call("Gemini", f"sentiment analysis for {ticker}")
+
+        api_start = time.perf_counter()
         response = _rate_limited_generate(
             client,
             settings.gemini_model,
             prompt,
             config
         )
+        api_elapsed = time.perf_counter() - api_start
+        logger.debug(f"Gemini API response received in {api_elapsed:.3f}s")
 
         result = json.loads(response.text)
         return SentimentAnalysis(**result)

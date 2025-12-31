@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import tickers
+from api.routers import tickers, jobs
 from api.schemas import HealthResponse, ApiStatusResponse, ApiServiceStatus
 from database import get_database
 from schedulers.scheduler import start_scheduler, stop_scheduler, get_scheduler_status
 from rate_limit_manager import get_rate_limit_manager
 from logger import logger
+from config import get_settings
 
 
 @asynccontextmanager
@@ -23,8 +24,13 @@ async def lifespan(app: FastAPI):
     db.init_db()
     logger.info("Database initialized")
 
-    # Start scheduler
-    start_scheduler()
+    # Start scheduler (if enabled)
+    settings = get_settings()
+    if settings.scheduler_enabled:
+        logger.info("Scheduler mode: ENABLED - Background jobs will run automatically")
+        start_scheduler()
+    else:
+        logger.info("Scheduler mode: DISABLED - Use /api/jobs/* endpoints to trigger jobs manually")
 
     yield
 
@@ -56,6 +62,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 
 
 @app.get("/", tags=["root"])
