@@ -16,9 +16,6 @@ jobs:
       contents: read
       packages: write
 
-    outputs:
-      image_tag: ${{ steps.meta.outputs.tags }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,20 +56,53 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            cd /opt/ia-trading
-
             # Login to GitHub Container Registry
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Pull new image
-            docker pull ghcr.io/${{ github.repository }}:latest
+            # Create network if not exists
+            docker network create ia-trading-network 2>/dev/null || true
 
-            # Restart with new image
-            docker compose -f docker-compose.prod.yml up -d --force-recreate api
+            # Create volume for postgres if not exists
+            docker volume create ia-trading-postgres 2>/dev/null || true
+
+            # Stop and remove old containers
+            docker stop ia-trading-api 2>/dev/null || true
+            docker rm ia-trading-api 2>/dev/null || true
+
+            # Start PostgreSQL (if not running)
+            if ! docker ps | grep -q ia-trading-db; then
+              docker run -d \
+                --name ia-trading-db \
+                --network ia-trading-network \
+                --restart unless-stopped \
+                -e POSTGRES_USER=ia_trading \
+                -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
+                -e POSTGRES_DB=ia_trading \
+                -v ia-trading-postgres:/var/lib/postgresql/data \
+                postgres:16-alpine
+
+              # Wait for DB to be ready
+              sleep 10
+            fi
+
+            # Pull and run API
+            docker pull ghcr.io/josefinolis/ia-investing:latest
+
+            docker run -d \
+              --name ia-trading-api \
+              --network ia-trading-network \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
+              -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \
+              -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+              -e SCHEDULER_ENABLED=true \
+              -e LOG_LEVEL=INFO \
+              ghcr.io/josefinolis/ia-investing:latest
 
             # Cleanup old images
             docker image prune -f
 
             # Health check
-            sleep 5
+            sleep 10
             curl -f http://localhost:8000/health || exit 1
