@@ -1,5 +1,6 @@
 """Tickers API router."""
 
+import time
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 
@@ -29,7 +30,14 @@ router = APIRouter()
 @router.get("", response_model=TickerListResponse)
 async def list_tickers():
     """Get all watched tickers with their sentiment."""
+    start = time.perf_counter()
+    logger.info("[API] GET /api/tickers - Starting request")
+
+    logger.info("[API] GET /api/tickers - Fetching tickers from database...")
+    db_start = time.perf_counter()
     tickers = get_all_tickers()
+    db_elapsed = time.perf_counter() - db_start
+    logger.info(f"[API] GET /api/tickers - Database query completed in {db_elapsed:.3f}s, found {len(tickers)} tickers")
 
     ticker_responses = []
     for t in tickers:
@@ -59,6 +67,9 @@ async def list_tickers():
             sentiment=sentiment_response
         ))
 
+    elapsed = time.perf_counter() - start
+    logger.info(f"[API] GET /api/tickers - Request completed in {elapsed:.3f}s")
+
     return TickerListResponse(
         tickers=ticker_responses,
         count=len(ticker_responses)
@@ -77,8 +88,16 @@ def _background_fetch_news(ticker_symbol: str, hours: int = 24):
 @router.post("", response_model=TickerResponse, status_code=201)
 async def create_ticker(ticker_data: TickerCreate, background_tasks: BackgroundTasks):
     """Add a new ticker to the watchlist."""
-    ticker = add_ticker(ticker_data.ticker, ticker_data.name)
+    start = time.perf_counter()
+    logger.info(f"[API] POST /api/tickers - Starting request for ticker: {ticker_data.ticker}")
 
+    logger.info(f"[API] POST /api/tickers - Adding ticker to database...")
+    db_start = time.perf_counter()
+    ticker = add_ticker(ticker_data.ticker, ticker_data.name)
+    db_elapsed = time.perf_counter() - db_start
+    logger.info(f"[API] POST /api/tickers - Ticker added to database in {db_elapsed:.3f}s")
+
+    logger.info(f"[API] POST /api/tickers - Building response...")
     sentiment_response = None
     if ticker.sentiment:
         sentiment_response = TickerSentimentResponse(

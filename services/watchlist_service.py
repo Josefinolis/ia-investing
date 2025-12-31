@@ -1,5 +1,6 @@
 """Watchlist management service."""
 
+import time
 from typing import List, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -10,16 +11,28 @@ from logger import logger
 
 def get_all_tickers(include_inactive: bool = False) -> List[WatchlistTicker]:
     """Get all tickers from watchlist."""
+    start = time.perf_counter()
+    logger.info("[WATCHLIST] get_all_tickers: Getting database connection...")
+
     db = get_database()
+    logger.info("[WATCHLIST] get_all_tickers: Opening session...")
+
     with db.get_session() as session:
+        query_start = time.perf_counter()
         query = session.query(WatchlistTicker)
         if not include_inactive:
             query = query.filter(WatchlistTicker.is_active == True)
         tickers = query.order_by(WatchlistTicker.added_at.desc()).all()
+        query_elapsed = time.perf_counter() - query_start
+        logger.info(f"[WATCHLIST] get_all_tickers: Query executed in {query_elapsed:.3f}s, found {len(tickers)} tickers")
+
         # Eagerly load relationships before session closes
         for ticker in tickers:
             _ = ticker.sentiment  # Force load
         session.expunge_all()
+
+        elapsed = time.perf_counter() - start
+        logger.info(f"[WATCHLIST] get_all_tickers: Completed in {elapsed:.3f}s")
         return tickers
 
 
@@ -38,12 +51,21 @@ def get_ticker(ticker_symbol: str) -> Optional[WatchlistTicker]:
 
 def add_ticker(ticker_symbol: str, name: Optional[str] = None) -> WatchlistTicker:
     """Add a ticker to the watchlist."""
+    start = time.perf_counter()
+    logger.info(f"[WATCHLIST] add_ticker: Starting for {ticker_symbol.upper()}")
+
     db = get_database()
+    logger.info("[WATCHLIST] add_ticker: Opening session...")
+
     with db.get_session() as session:
         # Check if ticker already exists
+        logger.info("[WATCHLIST] add_ticker: Checking if ticker exists...")
+        check_start = time.perf_counter()
         existing = session.query(WatchlistTicker).filter(
             WatchlistTicker.ticker == ticker_symbol.upper()
         ).first()
+        check_elapsed = time.perf_counter() - check_start
+        logger.info(f"[WATCHLIST] add_ticker: Existence check completed in {check_elapsed:.3f}s")
 
         if existing:
             # Reactivate if inactive
@@ -51,13 +73,18 @@ def add_ticker(ticker_symbol: str, name: Optional[str] = None) -> WatchlistTicke
                 existing.is_active = True
                 if name:
                     existing.name = name
+                commit_start = time.perf_counter()
                 session.commit()
-                logger.info(f"Reactivated ticker: {ticker_symbol.upper()}")
+                commit_elapsed = time.perf_counter() - commit_start
+                logger.info(f"[WATCHLIST] add_ticker: Reactivated ticker {ticker_symbol.upper()} (commit: {commit_elapsed:.3f}s)")
             _ = existing.sentiment  # Force load relationship
             session.expunge_all()
+            elapsed = time.perf_counter() - start
+            logger.info(f"[WATCHLIST] add_ticker: Returned existing ticker in {elapsed:.3f}s")
             return existing
 
         # Create new ticker
+        logger.info("[WATCHLIST] add_ticker: Creating new ticker...")
         ticker = WatchlistTicker(
             ticker=ticker_symbol.upper(),
             name=name,
@@ -65,9 +92,13 @@ def add_ticker(ticker_symbol: str, name: Optional[str] = None) -> WatchlistTicke
             is_active=True
         )
         session.add(ticker)
+        commit1_start = time.perf_counter()
         session.commit()
+        commit1_elapsed = time.perf_counter() - commit1_start
+        logger.info(f"[WATCHLIST] add_ticker: First commit (ticker) in {commit1_elapsed:.3f}s")
 
         # Create empty sentiment record
+        logger.info("[WATCHLIST] add_ticker: Creating sentiment record...")
         sentiment = TickerSentiment(
             ticker=ticker_symbol.upper(),
             score=0.0,
@@ -80,13 +111,18 @@ def add_ticker(ticker_symbol: str, name: Optional[str] = None) -> WatchlistTicke
             total_pending=0
         )
         session.add(sentiment)
+        commit2_start = time.perf_counter()
         session.commit()
+        commit2_elapsed = time.perf_counter() - commit2_start
+        logger.info(f"[WATCHLIST] add_ticker: Second commit (sentiment) in {commit2_elapsed:.3f}s")
 
         # Refresh to load the sentiment relationship
+        logger.info("[WATCHLIST] add_ticker: Refreshing ticker...")
         session.refresh(ticker)
         _ = ticker.sentiment  # Force load relationship
 
-        logger.info(f"Added ticker to watchlist: {ticker_symbol.upper()}")
+        elapsed = time.perf_counter() - start
+        logger.info(f"[WATCHLIST] add_ticker: Added new ticker {ticker_symbol.upper()} in {elapsed:.3f}s")
         session.expunge_all()
         return ticker
 

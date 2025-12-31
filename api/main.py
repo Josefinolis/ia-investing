@@ -16,13 +16,29 @@ from config import get_settings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
+    import time
+
     # Startup
+    startup_start = time.perf_counter()
+    logger.info("=" * 50)
     logger.info("Starting IA Trading API...")
+    logger.info("=" * 50)
 
     # Initialize database
+    logger.info("[STARTUP] Connecting to database...")
+    db_start = time.perf_counter()
     db = get_database()
+    db_connect_elapsed = time.perf_counter() - db_start
+    logger.info(f"[STARTUP] Database connection established in {db_connect_elapsed:.3f}s")
+
+    logger.info("[STARTUP] Initializing database tables...")
+    init_start = time.perf_counter()
     db.init_db()
-    logger.info("Database initialized")
+    init_elapsed = time.perf_counter() - init_start
+    logger.info(f"[STARTUP] Database tables initialized in {init_elapsed:.3f}s")
+
+    startup_elapsed = time.perf_counter() - startup_start
+    logger.info(f"[STARTUP] Total startup time: {startup_elapsed:.3f}s")
 
     # Start scheduler (if enabled)
     settings = get_settings()
