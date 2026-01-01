@@ -94,9 +94,11 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | `POST /api/tickers` | Add a new ticker |
 | `GET /api/tickers/{symbol}` | Get ticker details with news |
 | `DELETE /api/tickers/{symbol}` | Remove a ticker |
+| `POST /api/tickers/{symbol}/fetch` | Trigger news fetch for ticker |
+| `POST /api/tickers/{symbol}/analyze` | Trigger analysis for ticker |
 | `GET /api/jobs/status` | Job tracker status |
-| `POST /api/jobs/fetch` | Trigger news fetch manually |
-| `POST /api/jobs/analyze` | Trigger analysis manually |
+| `POST /api/jobs/fetch` | Trigger news fetch for all tickers |
+| `POST /api/jobs/analyze` | Trigger analysis for all pending |
 
 **For Android Emulator:** Use `http://10.0.2.2:8000` (maps to host's localhost:8000).
 **For Physical Device:** Use `http://195.20.235.94` (production VPS).

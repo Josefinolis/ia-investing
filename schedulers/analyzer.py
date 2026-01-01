@@ -3,7 +3,7 @@
 import time
 from typing import Set, Dict, Any
 
-from services.news_service import get_pending_news, update_news_analysis
+from services.news_service import get_pending_news, get_pending_news_for_ticker, update_news_analysis
 from services.sentiment_service import update_ticker_sentiment
 from ia_analisis import analyze_sentiment, AnalysisError
 from logger import logger
@@ -209,4 +209,81 @@ def analyze_all_pending() -> Dict[str, Any]:
         "success_count": success_count,
         "error_count": error_count,
         "tickers_updated": len(processed_tickers)
+    }
+
+
+def analyze_pending_for_ticker(ticker_symbol: str) -> Dict[str, Any]:
+    """Analyze pending news for a specific ticker."""
+    job_start = time.perf_counter()
+    ticker = ticker_symbol.upper()
+    logger.info(f"Analyzing pending news for {ticker}...")
+
+    # Check if Gemini is available
+    rate_limiter = get_rate_limit_manager()
+    if not rate_limiter.gemini.is_available():
+        remaining = rate_limiter.gemini.get_remaining_cooldown()
+        logger.info(f"Gemini API in cooldown, {remaining}s remaining. Skipping analysis.")
+        elapsed = time.perf_counter() - job_start
+        return {
+            "success": False,
+            "reason": "gemini_cooldown",
+            "duration": elapsed,
+            "success_count": 0
+        }
+
+    # Fetch pending news for this ticker
+    pending_news = get_pending_news_for_ticker(ticker)
+
+    if not pending_news:
+        logger.info(f"No pending news to analyze for {ticker}")
+        elapsed = time.perf_counter() - job_start
+        return {
+            "success": True,
+            "duration": elapsed,
+            "success_count": 0,
+            "ticker": ticker
+        }
+
+    logger.info(f"Found {len(pending_news)} pending news items for {ticker}")
+
+    success_count = 0
+    error_count = 0
+
+    for idx, news in enumerate(pending_news, 1):
+        try:
+            logger.info(f"Processing {idx}/{len(pending_news)}: {news.title[:50]}...")
+
+            analysis = analyze_sentiment(news.ticker, news.summary)
+
+            if analysis:
+                update_news_analysis(
+                    news_id=news.id,
+                    sentiment=analysis.sentiment.value,
+                    justification=analysis.justification
+                )
+                success_count += 1
+                logger.info(f"Analyzed news {news.id}: {analysis.sentiment.value}")
+            else:
+                error_count += 1
+
+        except Exception as e:
+            logger.error(f"Error analyzing news {news.id}: {e}")
+            error_count += 1
+
+    # Update aggregated sentiment for this ticker
+    logger.info(f"Updating sentiment aggregation for {ticker}...")
+    try:
+        update_ticker_sentiment(ticker)
+    except Exception as e:
+        logger.error(f"Failed to update sentiment for {ticker}: {e}")
+
+    job_elapsed = time.perf_counter() - job_start
+    logger.info(f"Analysis for {ticker} completed in {job_elapsed:.3f}s. Success: {success_count}, Errors: {error_count}")
+
+    return {
+        "success": True,
+        "duration": job_elapsed,
+        "success_count": success_count,
+        "error_count": error_count,
+        "ticker": ticker
     }

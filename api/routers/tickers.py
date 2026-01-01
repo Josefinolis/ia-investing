@@ -22,6 +22,7 @@ from services.watchlist_service import (
 from services.news_service import get_news_by_ticker, get_news_counts
 from services.sentiment_service import get_ticker_sentiment
 from schedulers.news_fetcher import fetch_news_for_ticker
+from schedulers.analyzer import analyze_pending_for_ticker
 from logger import logger
 
 router = APIRouter()
@@ -86,18 +87,16 @@ def _background_fetch_news(ticker_symbol: str, hours: int = 24):
 
 
 @router.post("", response_model=TickerResponse, status_code=201)
-async def create_ticker(ticker_data: TickerCreate, background_tasks: BackgroundTasks):
-    """Add a new ticker to the watchlist."""
+async def create_ticker(ticker_data: TickerCreate):
+    """Add a new ticker to the watchlist. Does NOT fetch news automatically."""
     start = time.perf_counter()
-    logger.info(f"[API] POST /api/tickers - Starting request for ticker: {ticker_data.ticker}")
+    logger.info(f"[API] POST /api/tickers - Creating ticker: {ticker_data.ticker}")
 
-    logger.info(f"[API] POST /api/tickers - Adding ticker to database...")
-    db_start = time.perf_counter()
     ticker = add_ticker(ticker_data.ticker, ticker_data.name)
-    db_elapsed = time.perf_counter() - db_start
-    logger.info(f"[API] POST /api/tickers - Ticker added to database in {db_elapsed:.3f}s")
 
-    logger.info(f"[API] POST /api/tickers - Building response...")
+    elapsed = time.perf_counter() - start
+    logger.info(f"[API] POST /api/tickers - Ticker created in {elapsed:.3f}s")
+
     sentiment_response = None
     if ticker.sentiment:
         sentiment_response = TickerSentimentResponse(
@@ -114,9 +113,6 @@ async def create_ticker(ticker_data: TickerCreate, background_tasks: BackgroundT
             total_pending=ticker.sentiment.total_pending,
             updated_at=ticker.sentiment.updated_at
         )
-
-    # Trigger initial news fetch in background (non-blocking)
-    background_tasks.add_task(_background_fetch_news, ticker.ticker, 24)
 
     return TickerResponse(
         id=ticker.id,
@@ -266,3 +262,27 @@ async def trigger_fetch(
 
     background_tasks.add_task(_background_fetch_news, ticker_symbol, hours)
     return {"message": f"News fetch started for {ticker_symbol}", "status": "processing"}
+
+
+def _background_analyze_news(ticker_symbol: str):
+    """Background task to analyze pending news for a ticker."""
+    try:
+        result = analyze_pending_for_ticker(ticker_symbol)
+        logger.info(f"Background analyze completed for {ticker_symbol}: {result}")
+    except Exception as e:
+        logger.warning(f"Background analyze failed for {ticker_symbol}: {e}")
+
+
+@router.post("/{ticker_symbol}/analyze", status_code=202)
+async def trigger_analyze(
+    ticker_symbol: str,
+    background_tasks: BackgroundTasks
+):
+    """Trigger sentiment analysis for pending news of a specific ticker (runs in background)."""
+    ticker = get_ticker(ticker_symbol)
+
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+
+    background_tasks.add_task(_background_analyze_news, ticker_symbol)
+    return {"message": f"Analysis started for {ticker_symbol}", "status": "processing"}

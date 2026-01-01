@@ -122,6 +122,24 @@ def get_pending_news(limit: int = 10) -> List[NewsRecord]:
         return news
 
 
+def get_pending_news_for_ticker(ticker_symbol: str, limit: int = 100) -> List[NewsRecord]:
+    """Get pending news items for a specific ticker."""
+    db = get_database()
+    with db.get_session() as session:
+        news = (
+            session.query(NewsRecord)
+            .filter(
+                NewsRecord.ticker == ticker_symbol.upper(),
+                NewsRecord.status == "pending"
+            )
+            .order_by(NewsRecord.fetched_at.asc())
+            .limit(limit)
+            .all()
+        )
+        session.expunge_all()
+        return news
+
+
 def update_news_analysis(
     news_id: int,
     sentiment: str,
