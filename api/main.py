@@ -1,8 +1,20 @@
 """FastAPI application entry point."""
 
+import faulthandler
+import gc
+import os
+import resource
+import sys
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Enable faulthandler to dump tracebacks on SIGUSR1
+faulthandler.enable()
+if hasattr(faulthandler, 'register'):
+    import signal
+    faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 from api.routers import tickers, jobs
 from api.schemas import HealthResponse, ApiStatusResponse, ApiServiceStatus
@@ -158,3 +170,98 @@ async def api_status():
         gemini=ApiServiceStatus(**status_data["gemini"]),
         alpha_vantage=ApiServiceStatus(**status_data["alpha_vantage"])
     )
+
+
+@app.get("/debug/status", tags=["debug"])
+async def debug_status():
+    """Debug endpoint showing system resource usage."""
+    import psutil
+
+    process = psutil.Process()
+
+    # Thread info
+    all_threads = threading.enumerate()
+    thread_info = [
+        {"name": t.name, "alive": t.is_alive(), "daemon": t.daemon}
+        for t in all_threads
+    ]
+
+    # Memory info
+    mem_info = process.memory_info()
+
+    # File descriptors
+    try:
+        fd_count = len(process.open_files())
+        connections = len(process.connections())
+    except Exception:
+        fd_count = -1
+        connections = -1
+
+    # Database pool info
+    db_pool_info = {}
+    try:
+        db = get_database()
+        if hasattr(db, '_engine') and db._engine:
+            pool = db._engine.pool
+            db_pool_info = {
+                "size": pool.size(),
+                "checked_out": pool.checkedout(),
+                "overflow": pool.overflow(),
+                "checked_in": pool.checkedin(),
+            }
+    except Exception as e:
+        db_pool_info = {"error": str(e)}
+
+    # Resource limits
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+
+    return {
+        "threads": {
+            "count": len(all_threads),
+            "details": thread_info
+        },
+        "memory": {
+            "rss_mb": mem_info.rss / 1024 / 1024,
+            "vms_mb": mem_info.vms / 1024 / 1024,
+        },
+        "file_descriptors": {
+            "open_files": fd_count,
+            "connections": connections,
+            "limit_soft": soft_limit,
+            "limit_hard": hard_limit,
+        },
+        "database_pool": db_pool_info,
+        "gc": {
+            "objects": len(gc.get_objects()),
+            "garbage": len(gc.garbage),
+        },
+        "process": {
+            "pid": os.getpid(),
+            "cpu_percent": process.cpu_percent(),
+            "num_threads": process.num_threads(),
+        }
+    }
+
+
+@app.get("/debug/threads/dump", tags=["debug"])
+async def dump_threads():
+    """Dump stack traces of all threads."""
+    import io
+    import traceback
+
+    output = io.StringIO()
+    output.write(f"Thread dump at {__import__('datetime').datetime.now()}\n")
+    output.write(f"Total threads: {threading.active_count()}\n\n")
+
+    for thread_id, frame in sys._current_frames().items():
+        thread_name = "Unknown"
+        for t in threading.enumerate():
+            if t.ident == thread_id:
+                thread_name = t.name
+                break
+
+        output.write(f"--- Thread {thread_id} ({thread_name}) ---\n")
+        output.write("".join(traceback.format_stack(frame)))
+        output.write("\n")
+
+    return {"dump": output.getvalue()}
