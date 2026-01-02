@@ -1,6 +1,7 @@
 """Tickers API router."""
 
 import time
+import threading
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 
@@ -77,13 +78,24 @@ async def list_tickers():
     )
 
 
-def _background_fetch_news(ticker_symbol: str, hours: int = 24):
-    """Background task to fetch news for a ticker."""
+def _do_fetch_news(ticker_symbol: str, hours: int = 24):
+    """Actual news fetch (runs in separate thread)."""
     try:
         result = fetch_news_for_ticker(ticker_symbol, hours=hours)
         logger.info(f"Background fetch completed for {ticker_symbol}: {result}")
     except Exception as e:
         logger.warning(f"Background news fetch failed for {ticker_symbol}: {e}")
+
+
+def _background_fetch_news(ticker_symbol: str, hours: int = 24):
+    """Background task that spawns a thread to avoid blocking the event loop."""
+    thread = threading.Thread(
+        target=_do_fetch_news,
+        args=(ticker_symbol, hours),
+        daemon=True
+    )
+    thread.start()
+    logger.info(f"Started background fetch thread for {ticker_symbol}")
 
 
 @router.post("", response_model=TickerResponse, status_code=201)
@@ -264,13 +276,24 @@ async def trigger_fetch(
     return {"message": f"News fetch started for {ticker_symbol}", "status": "processing"}
 
 
-def _background_analyze_news(ticker_symbol: str):
-    """Background task to analyze pending news for a ticker."""
+def _do_analyze_news(ticker_symbol: str):
+    """Actual news analysis (runs in separate thread)."""
     try:
         result = analyze_pending_for_ticker(ticker_symbol)
         logger.info(f"Background analyze completed for {ticker_symbol}: {result}")
     except Exception as e:
         logger.warning(f"Background analyze failed for {ticker_symbol}: {e}")
+
+
+def _background_analyze_news(ticker_symbol: str):
+    """Background task that spawns a thread to avoid blocking the event loop."""
+    thread = threading.Thread(
+        target=_do_analyze_news,
+        args=(ticker_symbol,),
+        daemon=True
+    )
+    thread.start()
+    logger.info(f"Started background analyze thread for {ticker_symbol}")
 
 
 @router.post("/{ticker_symbol}/analyze", status_code=202)
