@@ -21,8 +21,16 @@ class NewsItem(BaseModel):
     summary: str = Field(..., min_length=1)
     published_date: str = Field(..., description="Publication date in API format")
     source: Optional[str] = None
+    source_type: Optional[str] = Field(
+        None, description="Source type: alpha_vantage, reddit, twitter"
+    )
     url: Optional[str] = None
     relevance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    engagement_score: Optional[int] = Field(
+        None, description="Social engagement (likes, upvotes, etc.)"
+    )
+    author: Optional[str] = Field(None, description="Author username")
+    author_followers: Optional[int] = Field(None, description="Author follower count")
 
     @field_validator("title", "summary")
     @classmethod

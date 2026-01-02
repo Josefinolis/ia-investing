@@ -3,6 +3,10 @@ requests>=2.31.0
 python-dotenv>=1.0.0
 google-genai>=1.0.0
 
+# Social media APIs
+praw>=7.7.0                    # Reddit API
+ntscraper>=0.4.0               # Twitter scraping (Nitter-based)
+
 # Data validation
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
