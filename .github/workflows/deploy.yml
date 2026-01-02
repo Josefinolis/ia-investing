@@ -94,8 +94,8 @@ jobs:
               --name ia-trading-api \
               --network ia-trading-network \
               --restart unless-stopped \
-              --memory=512m \
-              --memory-swap=768m \
+              --memory=1g \
+              --memory-swap=1536m \
               -p 80:8000 \
               -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
               -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \

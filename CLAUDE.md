@@ -62,7 +62,7 @@ pytest tests/ -v
 
 ## Concurrency & Performance
 
-The API uses **4 uvicorn workers** to handle concurrent requests. This prevents a blocked worker from freezing the entire server.
+The API uses **2 uvicorn workers** with **1GB memory limit** to handle concurrent requests. This prevents a blocked worker from freezing the entire server (4 workers exceeded 512MB and caused OOM).
 
 ### News Scrapers
 
