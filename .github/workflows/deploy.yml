@@ -75,6 +75,8 @@ jobs:
                 --name ia-trading-db \
                 --network ia-trading-network \
                 --restart unless-stopped \
+                --memory=512m \
+                --memory-swap=768m \
                 -e POSTGRES_USER=ia_trading \
                 -e POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }} \
                 -e POSTGRES_DB=ia_trading \
@@ -92,6 +94,8 @@ jobs:
               --name ia-trading-api \
               --network ia-trading-network \
               --restart unless-stopped \
+              --memory=512m \
+              --memory-swap=768m \
               -p 80:8000 \
               -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
               -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \
