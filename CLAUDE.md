@@ -60,6 +60,30 @@ pytest tests/ -v
 - **Deploy:** Push to `master` triggers GitHub Actions
 - **Infrastructure:** https://github.com/Josefinolis/documentation
 
+## Concurrency & Performance
+
+The API uses **4 uvicorn workers** to handle concurrent requests. This prevents a blocked worker from freezing the entire server.
+
+### News Scrapers
+
+Scrapers run in parallel using `ThreadPoolExecutor` with a **30-second timeout** per source:
+
+| Source | Status | Notes |
+|--------|--------|-------|
+| Alpha Vantage | Active | Rate limited (5/min) |
+| Reddit | Active | Via ntscraper (blocking) |
+| Twitter | Active | Via ntscraper (blocking) |
+
+The `news_sources/aggregator.py` wraps blocking scrapers in threads to prevent them from freezing the API.
+
+### Configuration
+
+```bash
+# Enable/disable scrapers in deployment
+TWITTER_ENABLED=true
+SCHEDULER_ENABLED=false
+```
+
 ## Rate Limits
 
 | Service | Limit | Cooldown |
