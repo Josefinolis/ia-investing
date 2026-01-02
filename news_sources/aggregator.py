@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import List, Optional, Set
 from difflib import SequenceMatcher
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from news_sources.base import NewsSource
 from news_sources.alpha_vantage import AlphaVantageSource
@@ -10,6 +11,9 @@ from news_sources.reddit import RedditSource
 from news_sources.twitter import TwitterSource
 from models import NewsItem
 from logger import logger
+
+# Timeout for each scraper (seconds)
+SCRAPER_TIMEOUT = 30
 
 
 class NewsAggregator:
@@ -52,7 +56,7 @@ class NewsAggregator:
         sources_filter: Optional[List[str]] = None,
     ) -> List[NewsItem]:
         """
-        Fetch news from all available sources.
+        Fetch news from all available sources using thread pool.
 
         Args:
             ticker: Stock ticker symbol
@@ -76,16 +80,36 @@ class NewsAggregator:
                 )
                 sources_to_use = self.sources
 
-        for source in sources_to_use:
+        def fetch_from_source(source: NewsSource) -> List[NewsItem]:
+            """Fetch news from a single source with error handling."""
             try:
                 logger.debug(f"Fetching news from {source.source_name}")
                 news = source.fetch_news(ticker, time_from, time_to)
-                all_news.extend(news)
                 logger.debug(f"Got {len(news)} items from {source.source_name}")
-
+                return news
             except Exception as e:
                 logger.warning(f"Error fetching from {source.source_name}: {e}")
-                continue
+                return []
+
+        # Execute scrapers in parallel with timeout to prevent blocking
+        with ThreadPoolExecutor(max_workers=len(sources_to_use)) as executor:
+            futures = {
+                executor.submit(fetch_from_source, source): source
+                for source in sources_to_use
+            }
+
+            for future in futures:
+                source = futures[future]
+                try:
+                    news = future.result(timeout=SCRAPER_TIMEOUT)
+                    all_news.extend(news)
+                except FuturesTimeoutError:
+                    logger.warning(
+                        f"Timeout fetching from {source.source_name} "
+                        f"(>{SCRAPER_TIMEOUT}s), skipping"
+                    )
+                except Exception as e:
+                    logger.warning(f"Error fetching from {source.source_name}: {e}")
 
         deduplicated = self._deduplicate(all_news)
         sorted_news = self._sort_by_date(deduplicated)
