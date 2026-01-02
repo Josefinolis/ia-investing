@@ -2,9 +2,10 @@
 
 ## Project Overview
 
-**IA Trading** is a production-ready Python CLI tool that analyzes news sentiment for publicly traded companies using AI. It retrieves financial news via Alpha Vantage API and uses Google's Gemini AI to classify sentiment, providing trading signals and actionable insights.
+**IA Trading** is a production-ready Python CLI tool that analyzes news sentiment for publicly traded companies using AI. It retrieves financial news from **multiple sources** (Alpha Vantage, Reddit, Twitter) and uses Google's Gemini AI to classify sentiment, providing trading signals and actionable insights.
 
 ### Key Features
+- **Multi-source news aggregation** (Alpha Vantage, Reddit, Twitter)
 - Sentiment analysis with 5 categories (Highly Negative to Highly Positive)
 - Trading signals (STRONG BUY, BUY, HOLD, SELL, STRONG SELL)
 - Time-weighted scoring with trend detection
@@ -26,9 +27,17 @@ pip install -r requirements.txt
 
 ### Configuration
 Create a `.env` file (use `.env.example` as template):
-```
+```bash
+# Required
 ALPHA_VANTAGE_API_KEY=your_key_here
 GEMINI_API_KEY=your_key_here
+
+# Optional - Reddit API (for social sentiment)
+REDDIT_CLIENT_ID=your_reddit_client_id
+REDDIT_CLIENT_SECRET=your_reddit_client_secret
+
+# Optional - Twitter (disabled by default, Nitter instances unreliable)
+TWITTER_ENABLED=false
 ```
 
 ### Usage Examples
@@ -68,7 +77,7 @@ The API is deployed on a VPS (IONOS Debian 12) with automatic deployment via Git
 
 **Deployment:** Push to `master` triggers automatic build and deploy.
 
-See `VPS_SETUP.md` for deployment details.
+**Infrastructure docs:** https://github.com/Josefinolis/documentation
 
 ### Running Locally (Development)
 
@@ -91,7 +100,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | `GET /health` | Health check |
 | `GET /docs` | Swagger UI documentation |
 | `GET /api/tickers` | List all tracked tickers |
-| `POST /api/tickers` | Add a new ticker |
+| `POST /api/tickers` | Add a new ticker (does NOT fetch news) |
 | `GET /api/tickers/{symbol}` | Get ticker details with news |
 | `DELETE /api/tickers/{symbol}` | Remove a ticker |
 | `POST /api/tickers/{symbol}/fetch` | Trigger news fetch for ticker |
@@ -119,26 +128,65 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ┌───────────────┐    ┌───────────────┐    ┌───────────────┐
 │news_retriever │    │  ia_analisis  │    │   database    │
 │               │    │               │    │               │
-│ Alpha Vantage │    │  Gemini AI    │    │   SQLite      │
-│ API + Cache   │    │  Analysis     │    │   Storage     │
+│  Aggregator   │    │  Gemini AI    │    │   SQLite      │
+│  Multi-source │    │  Analysis     │    │   Storage     │
 └───────────────┘    └───────────────┘    └───────────────┘
-        │                     │                     │
-        v                     v                     v
-┌───────────────┐    ┌───────────────┐    ┌───────────────┐
-│    cache      │    │    models     │    │   exporter    │
-│               │    │               │    │               │
-│ File-based    │    │   Pydantic    │    │ JSON/CSV/HTML │
-│ TTL caching   │    │   Validation  │    │   Reports     │
-└───────────────┘    └───────────────┘    └───────────────┘
-        │                     │
-        v                     v
-┌───────────────┐    ┌───────────────┐
-│    config     │    │   scoring     │
-│               │    │               │
-│   Settings    │    │  Aggregation  │
-│   from .env   │    │  & Signals    │
-└───────────────┘    └───────────────┘
+        │
+        v
+┌─────────────────────────────────────────────────────┐
+│                   news_sources/                      │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐   │
+│  │Alpha Vantage│ │   Reddit    │ │   Twitter   │   │
+│  │  (API)      │ │   (PRAW)    │ │ (ntscraper) │   │
+│  └─────────────┘ └─────────────┘ └─────────────┘   │
+└─────────────────────────────────────────────────────┘
 ```
+
+---
+
+## News Sources
+
+The system supports multiple news sources that are aggregated and deduplicated:
+
+| Source | Type | Configuration | Status |
+|--------|------|---------------|--------|
+| **Alpha Vantage** | Financial News API | `ALPHA_VANTAGE_API_KEY` | Required |
+| **Reddit** | Social Media (PRAW) | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | Optional |
+| **Twitter** | Social Media (ntscraper) | `TWITTER_ENABLED` | Optional (disabled by default) |
+
+### Configuring Reddit
+
+1. Go to https://www.reddit.com/prefs/apps
+2. Click "create another app..."
+3. Fill in:
+   - **name**: `ia_trading`
+   - **type**: `script`
+   - **redirect uri**: `http://localhost:8080`
+4. Click "create app"
+5. Copy the client ID (under app name) and secret
+6. Add to `.env`:
+```bash
+REDDIT_CLIENT_ID=your_client_id
+REDDIT_CLIENT_SECRET=your_client_secret
+```
+
+**Default subreddits searched:** `wallstreetbets`, `stocks`, `investing`, `stockmarket`, `options`
+
+### Configuring Twitter
+
+Twitter uses ntscraper (Nitter-based scraping). No API key required, but Nitter instances are often unreliable.
+
+```bash
+# Enable Twitter (disabled by default)
+TWITTER_ENABLED=true
+
+# Optional settings
+TWITTER_MIN_LIKES=10
+TWITTER_MIN_RETWEETS=5
+TWITTER_MAX_RESULTS=50
+```
+
+> **Note:** Twitter scraping may not work reliably as public Nitter instances are frequently blocked by Twitter/X.
 
 ---
 
@@ -149,11 +197,21 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | Module | Purpose |
 |--------|---------|
 | `main.py` | CLI entry point, argument parsing, display |
-| `news_retriever.py` | Alpha Vantage API integration with caching |
+| `news_retriever.py` | Multi-source news aggregation |
 | `ia_analisis.py` | Gemini AI sentiment analysis |
 | `database.py` | SQLite persistence |
 | `models.py` | Pydantic data models |
 | `config.py` | Configuration management |
+
+### News Sources Package
+
+| Module | Purpose |
+|--------|---------|
+| `news_sources/base.py` | Abstract base class for news sources |
+| `news_sources/alpha_vantage.py` | Alpha Vantage API integration |
+| `news_sources/reddit.py` | Reddit API via PRAW |
+| `news_sources/twitter.py` | Twitter via ntscraper |
+| `news_sources/aggregator.py` | Combines and deduplicates all sources |
 
 ### Feature Modules
 
@@ -163,6 +221,7 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 | `exporter.py` | JSON, CSV, HTML export |
 | `scoring.py` | Sentiment aggregation and trading signals |
 | `logger.py` | Structured logging with Rich |
+| `rate_limit_manager.py` | Centralized rate limiting |
 
 ### Test Modules
 
@@ -175,6 +234,21 @@ uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ---
 
 ## Data Models
+
+### NewsItem
+```python
+class NewsItem(BaseModel):
+    title: str
+    summary: str
+    published_date: str
+    source: Optional[str]           # e.g., "Reuters", "r/wallstreetbets"
+    source_type: Optional[str]      # "alpha_vantage", "reddit", "twitter"
+    url: Optional[str]
+    relevance_score: Optional[float]
+    engagement_score: Optional[int] # Social engagement (likes, upvotes)
+    author: Optional[str]
+    author_followers: Optional[int]
+```
 
 ### SentimentCategory
 ```python
@@ -220,10 +294,18 @@ class SentimentCategory(str, Enum):
 ## Configuration
 
 ### Environment Variables
+
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `ALPHA_VANTAGE_API_KEY` | Alpha Vantage API key | Yes |
 | `GEMINI_API_KEY` | Google Gemini API key | Yes |
+| `REDDIT_CLIENT_ID` | Reddit app client ID | No |
+| `REDDIT_CLIENT_SECRET` | Reddit app client secret | No |
+| `REDDIT_SUBREDDITS` | Comma-separated subreddits | No |
+| `REDDIT_MIN_SCORE` | Minimum post score (default: 10) | No |
+| `TWITTER_ENABLED` | Enable Twitter source (default: false) | No |
+| `TWITTER_MIN_LIKES` | Minimum likes (default: 10) | No |
+| `TWITTER_MIN_RETWEETS` | Minimum retweets (default: 5) | No |
 
 ### Settings (config.py)
 | Setting | Default | Description |
@@ -257,21 +339,33 @@ ia_trading/
 ├── main.py              # CLI entry point
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic data models
-├── news_retriever.py    # Alpha Vantage API
+├── news_retriever.py    # Multi-source news aggregation
 ├── ia_analisis.py       # Gemini AI analysis
 ├── database.py          # SQLite persistence
 ├── cache.py             # API caching
 ├── exporter.py          # Export functionality
 ├── scoring.py           # Sentiment scoring
 ├── logger.py            # Logging configuration
+├── rate_limit_manager.py # Rate limiting
+├── news_sources/        # News source implementations
+│   ├── __init__.py
+│   ├── base.py          # Abstract base class
+│   ├── alpha_vantage.py # Alpha Vantage API
+│   ├── reddit.py        # Reddit via PRAW
+│   ├── twitter.py       # Twitter via ntscraper
+│   └── aggregator.py    # Source aggregator
+├── api/                 # FastAPI REST API
+│   ├── main.py
+│   ├── schemas.py
+│   └── routers/
+├── services/            # Business logic services
+├── schedulers/          # Background job schedulers
 ├── requirements.txt     # Dependencies
 ├── .env                 # API keys (not in git)
 ├── .env.example         # Template for .env
 ├── .gitignore           # Git exclusions
 ├── CLAUDE.md            # This file
-├── IMPROVEMENTS.md      # Improvement roadmap
 └── tests/
-    ├── __init__.py
     ├── test_models.py
     ├── test_config.py
     └── test_news_retriever.py
@@ -285,39 +379,10 @@ ia_trading/
 |---------|-----------------|
 | Alpha Vantage | 5 calls/minute, 500 calls/day |
 | Gemini | 15 RPM, 1M tokens/minute |
+| Reddit | 60 requests/minute |
+| Twitter | N/A (scraping) |
 
 The tool handles rate limiting automatically with `ratelimit` and `tenacity` libraries.
-
-### Alpha Vantage NEWS_SENTIMENT Parameters
-
-The API supports querying news **without specifying a ticker** using topics:
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `function` | Yes | `NEWS_SENTIMENT` |
-| `apikey` | Yes | API key |
-| `tickers` | No | Filter by stock/crypto/forex symbols |
-| `topics` | No | Filter by news categories |
-| `time_from` / `time_to` | No | Date range (format: YYYYMMDDTHHMM) |
-| `sort` / `limit` | No | Sort order and max results |
-
-**Available topics:**
-`blockchain`, `earnings`, `ipo`, `mergers_and_acquisitions`, `financial_markets`, `economy_fiscal`, `economy_monetary`, `economy_macro`, `energy_transportation`, `finance`, `life_sciences`, `manufacturing`, `real_estate`, `retail_wholesale`, `technology`
-
-> **Note:** Currently the app always requires a ticker. A future enhancement could allow topic-based queries without a specific ticker.
-
----
-
-## Future Enhancements
-
-See `IMPROVEMENTS.md` for detailed roadmap. Key items:
-- Real-time monitoring with alerts
-- Backtesting framework
-- Multi-source news integration (Reuters, Bloomberg)
-- Web dashboard (Streamlit)
-- Docker containerization
-- Historical price correlation
-- Topic-based news queries (without requiring a specific ticker)
 
 ---
 
@@ -336,3 +401,14 @@ See `IMPROVEMENTS.md` for detailed roadmap. Key items:
 ### Configuration error
 - Ensure `.env` file exists with valid keys
 - Check `.env.example` for required variables
+
+### Reddit not working
+- Verify credentials at https://www.reddit.com/prefs/apps
+- Ensure app type is "script"
+- Check if account email is verified
+- New accounts may need to wait a few days
+
+### Twitter not working
+- Twitter/ntscraper relies on public Nitter instances
+- These are frequently blocked by Twitter/X
+- Consider disabling with `TWITTER_ENABLED=false`
