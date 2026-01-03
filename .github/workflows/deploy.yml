@@ -96,7 +96,7 @@ jobs:
               --restart unless-stopped \
               --memory=1g \
               --memory-swap=1536m \
-              -p 80:8000 \
+              -p 8000:8000 \
               -e DATABASE_URL=postgresql://ia_trading:${{ secrets.POSTGRES_PASSWORD }}@ia-trading-db:5432/ia_trading \
               -e ALPHA_VANTAGE_API_KEY=${{ secrets.ALPHA_VANTAGE_API_KEY }} \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
